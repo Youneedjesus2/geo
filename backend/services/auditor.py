@@ -2,6 +2,7 @@ import os
 import json
 import re
 import google.generativeai as genai
+from google.generativeai.types import Tool, GoogleSearch
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import Dict
@@ -85,13 +86,12 @@ def query_gemini(business_name: str, city: str) -> Dict: # return a dictionary w
     REASONING: Always return the SAME shape so caller doesn't need to guess
     """
     try:
-        # Use Gemini 2.5 Flash (stable model with search grounding support)
-        # Alternative: 'gemini-3-pro-preview' or 'gemini-3-flash-preview'
+        # Use Gemini 2.5 Flash with Google Search grounding
         model = genai.GenerativeModel(
             'gemini-2.5-flash',
-            tools='google_search_retrieval'  # Enable Google Search grounding
+            tools=[Tool(google_search=GoogleSearch())]  # Enable Google Search grounding
         )
-        
+
         response = model.generate_content(
             get_search_prompt(business_name, city),
             generation_config=genai.types.GenerationConfig(
@@ -144,21 +144,21 @@ def query_openai(business_name: str, city: str, context: str, premium: bool = Fa
             model = "gpt-5.2"
             effort = "high"
         
-        response = openai_client.chat.completions.create(
+        response = openai_client.responses.create(
             model=model,
-            messages=[
+            input=[
                 {
-                    "role": "system",
+                    "role": "developer",
                     "content": """You are a Schema.org expert specializing in LocalBusiness structured data.
-                    
+
                     Your task: Extract business information and format it for Schema.org JSON-LD.
-                    
+
                     For each piece of information:
                     1. Extract the exact value
                     2. Rate confidence (HIGH/MEDIUM/LOW)
                     3. Note the source
                     4. Flag any inconsistencies
-                    
+
                     Required fields:
                     - Business name (legal name vs DBA)
                     - Full street address (number, street, suite/unit, city, state, ZIP)
@@ -166,17 +166,17 @@ def query_openai(business_name: str, city: str, context: str, premium: bool = Fa
                     - Hours of operation - each day, including holidays
                     - Special offers or promotions
                     - Business type (restaurant, medical, retail, etc.)
-                    
+
                     Format output as:
                     ## EXTRACTED DATA
                     [structured list]
-                    
+
                     ## CONFIDENCE ASSESSMENT
                     [what's certain, what's unclear]
-                    
+
                     ## SCHEMA.ORG RECOMMENDATIONS
                     [which Schema.org @type to use, required fields]
-                    
+
                     ## RED FLAGS
                     [missing data, inconsistencies, potential issues]
                     """
@@ -184,42 +184,43 @@ def query_openai(business_name: str, city: str, context: str, premium: bool = Fa
                 {
                     "role": "user",
                     "content": f"""Audit: {business_name} in {city}
-                    
+
                     SEARCH RESULTS FROM GOOGLE:
                     {context}
-                    
+
                     Provide thorough analysis for Schema.org JSON-LD generation."""
                 }
             ],
-            
-            # GPT-5.2 new parameters
+
+            # GPT-5.2 Responses API parameters
             reasoning={
                 "effort": effort  # "high" or "xhigh"
             },
             text={
                 "verbosity": "high"  # Detailed output
             },
-            
+
             # Standard parameters
             temperature=0.1,
             max_output_tokens=4000,
         )
-        
+
         # Extract usage stats (helpful for cost tracking)
         usage = response.usage
         token_details = {
-            "input_tokens": usage.prompt_tokens,
-            "output_tokens": usage.completion_tokens,
-            "total_tokens": usage.total_tokens,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "total_tokens": usage.input_tokens + usage.output_tokens,
         }
-        
+
         # GPT-5.2 exposes reasoning token count
-        if hasattr(usage, 'completion_tokens_details'):
-            token_details["reasoning_tokens"] = usage.completion_tokens_details.reasoning_tokens
-        
+        if hasattr(usage, 'output_tokens_details'):
+            if hasattr(usage.output_tokens_details, 'reasoning_tokens'):
+                token_details["reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
+
         return {
             "success": True,
-            "data": response.choices[0].message.content,
+            "data": response.output_text,
             "error": None,
             "token_usage": token_details,
             "model_used": model
