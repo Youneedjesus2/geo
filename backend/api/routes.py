@@ -17,9 +17,7 @@ async def audit_business(request: AuditRequest):
 
     # call service layer
     results = run_audit(request.business_name, request.city)
-    
 
-    return {
-        "status": "success",
-        "data": results
-    }
+    # Return results directly - run_audit() already provides the correct structure:
+    # { status, unified_results, raw_outputs, errors, warnings }
+    return results
